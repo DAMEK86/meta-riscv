@@ -16,6 +16,8 @@ Hardware details from vendor SDK (cv181x_base.dtsi / cv181x_base_riscv.dtsi):
 The TPU is driven by the sophgo-tpu-accel module which uses the Linux
 DRM/accel subsystem (CONFIG_DRM_ACCEL).
 
+Upstream-Status: Pending
+
 Signed-off-by: Andreas Rehn <rehn.andreas86@gmail.com>
 ---
  arch/riscv/boot/dts/sophgo/sg2000.dtsi | 16 ++++++++++++++++
@@ -24,7 +26,7 @@ Signed-off-by: Andreas Rehn <rehn.andreas86@gmail.com>
 diff --git a/arch/riscv/boot/dts/sophgo/sg2000.dtsi b/arch/riscv/boot/dts/sophgo/sg2000.dtsi
 --- a/arch/riscv/boot/dts/sophgo/sg2000.dtsi
 +++ b/arch/riscv/boot/dts/sophgo/sg2000.dtsi
-@@ -38,6 +38,22 @@
+@@ -38,5 +38,20 @@
  			riscv,ndev = <101>;
  		};
 

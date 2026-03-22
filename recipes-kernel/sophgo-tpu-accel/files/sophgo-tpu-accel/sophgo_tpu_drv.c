@@ -43,12 +43,10 @@ static const struct drm_driver sophgo_tpu_driver = {
 	.fops = &sophgo_tpu_fops,
 	.name = SOPHGO_TPU_DRIVER_NAME,
 	.desc = SOPHGO_TPU_DRIVER_DESC,
-	.date = "20260322",
 	.major = SOPHGO_TPU_DRIVER_MAJOR,
 	.minor = SOPHGO_TPU_DRIVER_MINOR,
 	.ioctls = sophgo_tpu_ioctls,
 	.num_ioctls = ARRAY_SIZE(sophgo_tpu_ioctls),
-	.gem_prime_mmap = sophgo_tpu_gem_mmap,
 };
 
 static int sophgo_tpu_probe(struct platform_device *pdev)
@@ -102,8 +100,8 @@ static int sophgo_tpu_probe(struct platform_device *pdev)
 		return dev_err_probe(&pdev->dev, PTR_ERR(tdev->rst_tpusys),
 				     "failed to get TPU subsystem reset\n");
 
-	/* IRQ — vendor driver uses platform_get_irq(pdev, 1) for TDMA */
-	tdev->tdma_irq = platform_get_irq(pdev, 0);
+	/* IRQ — TDMA is the second interrupt (index 1) in the DTS */
+	tdev->tdma_irq = platform_get_irq(pdev, 1);
 	if (tdev->tdma_irq < 0)
 		return dev_err_probe(&pdev->dev, tdev->tdma_irq,
 				     "failed to get TDMA IRQ\n");

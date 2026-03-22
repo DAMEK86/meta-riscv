@@ -5,11 +5,14 @@ GEM buffer management, replacing the vendor's ION-based driver."
 HOMEPAGE = "https://github.com/DAMEK86/meta-riscv"
 SECTION = "kernel/modules"
 LICENSE = "GPL-2.0-only"
-LIC_FILES_CHKSUM = "file://sophgo_tpu_drv.c;beginline=1;endline=2;md5=fa22e16eaf4f2311cd498a1c2ad81099"
+LIC_FILES_CHKSUM = "file://sophgo_tpu_drv.c;beginline=1;endline=2;md5=5f1db1a4251755b003fcaedee0489dba"
 
 COMPATIBLE_MACHINE = "milkv-duo-s"
 
 inherit module ptest
+
+# ptest debug binary may contain build paths
+INSANE_SKIP:${PN}-dbg += "buildpaths"
 
 SRC_URI = " \
     file://sophgo-tpu-accel/Makefile \

@@ -77,8 +77,11 @@ int sophgo_tpu_hw_init(struct sophgo_tpu_device *tdev)
 		return ret;
 	}
 
-	/* Clear any pending interrupts */
-	writel(0, tdev->tdma_regs + TDMA_INT_MASK);
+	/* INT_MASK is inverted: writing a bit MASKS that interrupt.
+	 * 0x20 = mask only the stride=0 error, leaving EOD unmasked.
+	 * (vendor: TDMA_MASK_INIT = 0x20)
+	 */
+	writel(0x20, tdev->tdma_regs + TDMA_INT_MASK);
 
 	dev_dbg(tdev->dev, "TPU HW init: AXI clk=%lu Hz\n",
 		clk_get_rate(tdev->clk_axi));
@@ -107,7 +110,6 @@ int sophgo_tpu_hw_run_dmabuf(struct sophgo_tpu_device *tdev,
 {
 	struct dma_hdr *header = dmabuf_vaddr;
 	u32 num_tdma;
-	long ret;
 
 	/* Validate header magic */
 	if (header->magic_m != TPU_DMABUF_HEADER_M) {
@@ -136,10 +138,24 @@ int sophgo_tpu_hw_run_dmabuf(struct sophgo_tpu_device *tdev,
 	/* Set TIU descriptor base address */
 	writel(header->arraybase[0], tdev->tiu_regs + BD_CTRL_BASE_ADDR);
 
+	/* Set TDMA descriptor base address (byte offset within buffer) */
+	{
+		u32 *cpu_desc = (u32 *)((u8 *)dmabuf_vaddr + 128);
+		u32 tdma_offset = cpu_desc[3]; /* offset_tdma */
+		writel(tdma_offset, tdev->tdma_regs + TDMA_DES_BASE);
+	}
+
+	/* Disable debug mode and enable DCM (vendor sequence) */
+	writel(0x0, tdev->tdma_regs + TDMA_DEBUG_MODE);
+	writel(0x0, tdev->tdma_regs + TDMA_DCM_DISABLE);
+
+	/* Set interrupt mask: 0x20 = mask only stride=0 error */
+	writel(0x20, tdev->tdma_regs + TDMA_INT_MASK);
+
 	/* Reset completion before kicking */
 	reinit_completion(&tdev->tdma_done);
 
-	/* Configure and kick TDMA engine (descriptor mode) */
+	/* Configure and kick TDMA engine (descriptor mode) — non-blocking */
 	writel((1 << TDMA_CTRL_ENABLE_BIT) |
 	       (1 << TDMA_CTRL_MODESEL_BIT) |
 	       (num_tdma << TDMA_CTRL_DESNUM_BIT) |
@@ -149,21 +165,7 @@ int sophgo_tpu_hw_run_dmabuf(struct sophgo_tpu_device *tdev,
 	       (1 << TDMA_CTRL_64BYTE_ALIGN_EN),
 	       tdev->tdma_regs + TDMA_CTRL);
 
-	/* Wait for TDMA completion interrupt */
-	ret = wait_for_completion_interruptible_timeout(
-		&tdev->tdma_done,
-		msecs_to_jiffies(SOPHGO_TPU_TIMEOUT_MS));
-
-	if (ret == 0) {
-		dev_err(tdev->dev, "TPU timeout after %dms\n",
-			SOPHGO_TPU_TIMEOUT_MS);
-		sophgo_tpu_hw_reset(tdev);
-		return -ETIMEDOUT;
-	} else if (ret < 0) {
-		dev_err(tdev->dev, "TPU interrupted: %ld\n", ret);
-		return ret;
-	}
-
+	/* Returns immediately — caller uses wait ioctl for completion */
 	return 0;
 }
 
@@ -175,18 +177,18 @@ int sophgo_tpu_hw_run_dmabuf(struct sophgo_tpu_device *tdev,
 irqreturn_t sophgo_tpu_hw_irq(int irq, void *data)
 {
 	struct sophgo_tpu_device *tdev = data;
-	u32 status;
+	u32 reg_value, int_status;
 
-	status = readl(tdev->tdma_regs + TDMA_SYNC_STATUS);
+	/* Read interrupt status from upper 16 bits of INT_MASK register */
+	reg_value = readl(tdev->tdma_regs + TDMA_INT_MASK);
+	int_status = (reg_value >> 16) & ~0x20; /* mask out stride error bit */
 
-	if (status & TDMA_INT_ERROR) {
-		dev_err(tdev->dev, "TDMA error: status=0x%08x\n", status);
-		/* Clear error and complete with error state */
-	}
+	if (int_status != TDMA_INT_EOD)
+		dev_err(tdev->dev, "TDMA IRQ unexpected: reg=0x%08x status=0x%x\n",
+			reg_value, int_status);
 
-	/* Clear interrupt by resetting sync ID */
-	writel(1 << TDMA_CTRL_RESET_SYNCID_BIT, tdev->tdma_regs + TDMA_CTRL);
-	writel(0, tdev->tdma_regs + TDMA_CTRL);
+	/* Mask all interrupts to acknowledge (vendor: write 0xFFFF0000) */
+	writel(0xFFFF0000, tdev->tdma_regs + TDMA_INT_MASK);
 
 	complete(&tdev->tdma_done);
 

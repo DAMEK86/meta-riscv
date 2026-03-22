@@ -47,13 +47,12 @@ static vm_fault_t sophgo_tpu_gem_vm_fault(struct vm_fault *vmf)
 	struct drm_gem_object *obj = vma->vm_private_data;
 	struct sophgo_tpu_bo *bo = to_sophgo_tpu_bo(obj);
 	unsigned long offset = vmf->address - vma->vm_start;
-	pfn_t pfn;
 
 	if (offset >= bo->size)
 		return VM_FAULT_SIGBUS;
 
-	pfn = phys_to_pfn_t(bo->paddr + offset, PFN_DEV);
-	return vmf_insert_pfn(vma, vmf->address, pfn_t_to_pfn(pfn));
+	return vmf_insert_pfn(vma, vmf->address,
+			      (bo->paddr + offset) >> PAGE_SHIFT);
 }
 
 static const struct vm_operations_struct sophgo_tpu_gem_vm_ops = {
@@ -82,11 +81,6 @@ const struct drm_gem_object_funcs sophgo_tpu_gem_funcs = {
 	.vmap = sophgo_tpu_gem_vmap,
 	.mmap = sophgo_tpu_gem_mmap_obj,
 };
-
-int sophgo_tpu_gem_mmap(struct file *filp, struct vm_area_struct *vma)
-{
-	return drm_gem_mmap(filp, vma);
-}
 
 int sophgo_tpu_create_bo_ioctl(struct drm_device *dev, void *data,
 			       struct drm_file *file)
@@ -154,7 +148,7 @@ int sophgo_tpu_mmap_bo_ioctl(struct drm_device *dev, void *data,
 	if (!obj)
 		return -ENOENT;
 
-	if (!drm_vma_node_has_offset(&obj->vma_node)) {
+	if (!drm_vma_node_offset_addr(&obj->vma_node)) {
 		int ret = drm_gem_create_mmap_offset(obj);
 
 		if (ret) {

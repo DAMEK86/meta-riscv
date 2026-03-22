@@ -95,7 +95,6 @@ int sophgo_tpu_mmap_bo_ioctl(struct drm_device *dev, void *data,
 			     struct drm_file *file);
 int sophgo_tpu_sync_ioctl(struct drm_device *dev, void *data,
 			  struct drm_file *file);
-int sophgo_tpu_gem_mmap(struct file *filp, struct vm_area_struct *vma);
 extern const struct drm_gem_object_funcs sophgo_tpu_gem_funcs;
 
 /* sophgo_tpu_submit.c */
