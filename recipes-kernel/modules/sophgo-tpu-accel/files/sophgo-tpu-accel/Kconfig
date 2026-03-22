@@ -1,0 +1,18 @@
+config DRM_ACCEL_SOPHGO_TPU
+	tristate "Sophgo SG2000 TPU Accelerator"
+	depends on DRM_ACCEL
+	depends on ARCH_SOPHGO || COMPILE_TEST
+	select DRM_GEM_DMA_HELPER
+	help
+	  DRM/accel driver for the Tensor Processing Unit (TPU) found
+	  in Sophgo SG2000/CV1813H SoCs (e.g., Milk-V Duo S).
+
+	  The TPU provides 0.5 TOPS INT8 inference capability for
+	  neural network models compiled with the Sophgo TPU-MLIR
+	  toolchain (.bmodel format).
+
+	  This driver exposes the TPU via /dev/accel/accelN using
+	  standard DRM GEM buffer management, replacing the vendor's
+	  proprietary ION-based driver.
+
+	  If unsure, say N.

@@ -10,6 +10,7 @@ SRC_URI = "git://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git;protoc
            file://0001-riscv-dts-sophgo-add-sg2000-soc-and-milkv-duo-s.patch \
            file://0002-sophgo-add-cv1800-rtcsys-reset-handler.patch \
            file://0003-mmc-sdhci-of-dwcmshc-add-cv18xx-callbacks-for-SG2000-eMMC.patch \
+           file://0004-riscv-dts-sophgo-sg2000-add-tpu-node.patch \
            file://milkv-duo-s_defconfig \
            file://multi.its \
            "
