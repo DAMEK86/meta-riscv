@@ -116,7 +116,7 @@ diff --git a/arch/riscv/dts/cv1813h-milkv-duo-s.dts b/arch/riscv/dts/cv1813h-mil
 new file mode 100644
 --- /dev/null
 +++ b/arch/riscv/dts/cv1813h-milkv-duo-s.dts
-@@ -0,0 +1,68 @@
+@@ -0,0 +1,69 @@
 +// SPDX-License-Identifier: (GPL-2.0 OR MIT)
 +/*
 + * Copyright (C) 2024 Andreas Rehn <rehn.andreas86@gmail.com>
@@ -133,6 +133,7 @@ new file mode 100644
 +	compatible = "milkv,duo-s", "sophgo,cv1813h";
 +
 +	aliases {
++		ethernet0 = &ethernet0;
 +		serial0 = &uart0;
 +		serial1 = &uart1;
 +		serial2 = &uart2;
@@ -245,18 +246,22 @@ diff --git a/board/sophgo/milkv_duo_s/board.c b/board/sophgo/milkv_duo_s/board.c
 new file mode 100644
 --- /dev/null
 +++ b/board/sophgo/milkv_duo_s/board.c
-@@ -0,0 +1,36 @@
+@@ -0,0 +1,78 @@
 +// SPDX-License-Identifier: GPL-2.0+
 +/*
 + * Copyright (c) 2024, Andreas Rehn <rehn.andreas86@gmail.com>
 + */
 +
 +#include <dm/lists.h>
++#include <env.h>
++#include <net.h>
 +#include <asm/io.h>
++#include <fdt_support.h>
 +
 +#include "../milkv_duo/ethernet.h"
 +
-+#define PINMUX_BASE	0x03001000
++#define PINMUX_BASE		0x03001000
++#define EFUSE_SHADOW_BASE	0x03050100
 +
 +static void cv181x_emmc_pinmux_init(void)
 +{
@@ -268,6 +273,37 @@ new file mode 100644
 +	writel(0, (void *)(PINMUX_BASE + 0x58));  /* EMMC_DAT3 */
 +	writel(0, (void *)(PINMUX_BASE + 0x5c));  /* EMMC_CMD */
 +	writel(0, (void *)(PINMUX_BASE + 0x60));  /* EMMC_DAT1 */
++}
++
++int misc_init_r(void)
++{
++	u32 ef0, ef1;
++	u8 mac[6];
++
++	/* Skip if ethaddr is already set */
++	if (env_get("ethaddr"))
++		return 0;
++
++	/* Derive MAC from efuse shadow registers (unique per chip) */
++	ef0 = readl((void *)EFUSE_SHADOW_BASE + 0x08);
++	ef1 = readl((void *)EFUSE_SHADOW_BASE + 0x0c);
++
++	if (ef0 == 0 && ef1 == 0)
++		return 0;  /* efuse empty, fall back to random */
++
++	mac[0] = (ef1 >> 8) & 0xff;
++	mac[1] = (ef1 >> 0) & 0xff;
++	mac[2] = (ef0 >> 24) & 0xff;
++	mac[3] = (ef0 >> 16) & 0xff;
++	mac[4] = (ef0 >> 8) & 0xff;
++	mac[5] = (ef0 >> 0) & 0xff;
++
++	/* Set locally administered + unicast bits */
++	mac[0] = (mac[0] & 0xfe) | 0x02;
++
++	eth_env_set_enetaddr("ethaddr", mac);
++
++	return 0;
 +}
 +
 +int board_init(void)
@@ -282,11 +318,18 @@ new file mode 100644
 +
 +	return 0;
 +}
++
++int ft_board_setup(void *blob, struct bd_info *bd)
++{
++	/* Write ethaddr into kernel DTB so Linux gets the same MAC */
++	fdt_fixup_ethernet(blob);
++	return 0;
++}
 diff --git a/configs/milkv_duo_s_defconfig b/configs/milkv_duo_s_defconfig
 new file mode 100644
 --- /dev/null
 +++ b/configs/milkv_duo_s_defconfig
-@@ -0,0 +1,45 @@
+@@ -0,0 +1,47 @@
 +CONFIG_RISCV=y
 +CONFIG_SYS_MALLOC_LEN=0x820000
 +CONFIG_SYS_MALLOC_F_LEN=0x8000
@@ -297,6 +340,8 @@ new file mode 100644
 +CONFIG_SYS_LOAD_ADDR=0x80080000
 +CONFIG_IDENT_STRING="milkv_duo_s"
 +CONFIG_TARGET_MILKV_DUO_S=y
++CONFIG_MISC_INIT_R=y
++CONFIG_OF_BOARD_SETUP=y
 +CONFIG_ARCH_RV64I=y
 +CONFIG_RISCV_SMODE=y
 +CONFIG_FIT=y
