@@ -1,0 +1,7 @@
+# short-description: Create SD card image for Milk-V Duo S development board
+# fip.bin is written raw to the start of the disk (before partition table)
+# FSBL boot ROM reads it from fixed sector offsets
+
+part fip --source rawcopy --sourceparams="file=fip.bin" --ondisk mmcblk0 --no-table --fixed-size 1M
+part /boot --source bootimg-partition --ondisk mmcblk0 --fstype=vfat --label boot --active --fixed-size 64M --align 4096
+part / --source rootfs --ondisk mmcblk0 --fstype=ext4 --label root --align 4096 --size 256M
