@@ -1,6 +1,16 @@
 # short-description: Create SD card image for Milk-V Duo S development board
-# fip.bin is written raw to the start of the disk (before partition table)
-# FSBL boot ROM reads it from fixed sector offsets
+#
+# Boot chain:
+#   1. Boot ROM reads fip.bin from raw SD sectors (starting at sector 1)
+#   2. fip.bin contains: FSBL BL2 + DDR init + OpenSBI + U-Boot
+#   3. FSBL initializes DDR, loads OpenSBI + U-Boot
+#   4. OpenSBI (v1.8.1+) discovers platform via embedded DTB
+#   5. U-Boot loads kernel + DTB from FAT boot partition
+#
+# Disk layout:
+#   - MBR at sector 0, fip.bin at sector 1 (rawcopy, 1MB)
+#   - /boot (FAT32, 64MB) - uImage.fit, default.dtb, uEnv.txt
+#   - / (ext4, 256MB) - rootfs
 
 part fip --source rawcopy --sourceparams="file=fip.bin" --ondisk mmcblk0 --no-table --fixed-size 1M
 part /boot --source bootimg-partition --ondisk mmcblk0 --fstype=vfat --label boot --active --fixed-size 64M --align 4096
