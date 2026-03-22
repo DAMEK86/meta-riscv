@@ -9,6 +9,7 @@ SRCREV = "v6.19.9"
 SRC_URI = "git://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git;protocol=https;branch=${BRANCH} \
            file://0001-riscv-dts-sophgo-add-sg2000-soc-and-milkv-duo-s.patch \
            file://0002-sophgo-add-cv1800-rtcsys-reset-handler.patch \
+           file://0003-riscv-dts-sophgo-sg2000-add-tpu-node.patch \
            file://milkv-duo-s_defconfig \
            file://multi.its \
            "

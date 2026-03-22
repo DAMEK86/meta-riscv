@@ -1,0 +1,48 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Andreas Rehn <rehn.andreas86@gmail.com>
+Date: Sat, 22 Mar 2026 00:00:00 +0000
+Subject: [PATCH] riscv: dts: sophgo: sg2000: add TPU accelerator node
+
+Add device tree node for the Sophgo SG2000 TPU (Tensor Processing Unit),
+a 0.5 TOPS INT8 inference accelerator.
+
+Hardware details from vendor SDK (cv181x_base.dtsi / cv181x_base_riscv.dtsi):
+  - TDMA registers at 0x0C100000 (0x1000)
+  - TIU registers at 0x0C101000 (0x1000)
+  - TIU IRQ: PLIC 75, TDMA IRQ: PLIC 76
+  - Clocks: TPU AXI + TPU fabric
+  - Resets: TDMA, TPU, TPU subsystem
+
+The TPU is driven by the sophgo-tpu-accel module which uses the Linux
+DRM/accel subsystem (CONFIG_DRM_ACCEL).
+
+Signed-off-by: Andreas Rehn <rehn.andreas86@gmail.com>
+---
+ arch/riscv/boot/dts/sophgo/sg2000.dtsi | 16 ++++++++++++++++
+ 1 file changed, 16 insertions(+)
+
+diff --git a/arch/riscv/boot/dts/sophgo/sg2000.dtsi b/arch/riscv/boot/dts/sophgo/sg2000.dtsi
+--- a/arch/riscv/boot/dts/sophgo/sg2000.dtsi
++++ b/arch/riscv/boot/dts/sophgo/sg2000.dtsi
+@@ -38,6 +38,22 @@
+ 			riscv,ndev = <101>;
+ 		};
+
++		tpu: tpu@c100000 {
++			compatible = "sophgo,sg2000-tpu";
++			reg = <0x0c100000 0x1000>,
++			      <0x0c101000 0x1000>;
++			reg-names = "tdma", "tiu";
++			interrupts = <75 IRQ_TYPE_LEVEL_HIGH>,
++				     <76 IRQ_TYPE_LEVEL_HIGH>;
++			interrupt-names = "tiu", "tdma";
++			clocks = <&clk CLK_TPU>, <&clk CLK_TPU_FAB>;
++			clock-names = "clk_tpu_axi", "clk_tpu_fab";
++			resets = <&rst RST_TDMA>, <&rst RST_TPU>, <&rst RST_TPUSYS>;
++			reset-names = "res_tdma", "res_tpu", "res_tpusys";
++			status = "okay";
++		};
++
+ 		clint: timer@74000000 {
+ 			compatible = "sophgo,sg2000-clint", "thead,c900-clint";
+ 			reg = <0x74000000 0x10000>;
