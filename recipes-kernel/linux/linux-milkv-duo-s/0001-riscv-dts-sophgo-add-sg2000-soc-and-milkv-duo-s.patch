@@ -114,7 +114,7 @@ diff --git a/arch/riscv/boot/dts/sophgo/sg2000-milkv-duo-s.dts b/arch/riscv/boot
 new file mode 100644
 --- /dev/null
 +++ b/arch/riscv/boot/dts/sophgo/sg2000-milkv-duo-s.dts
-@@ -0,0 +1,104 @@
+@@ -0,0 +1,122 @@
 +// SPDX-License-Identifier: (GPL-2.0 OR MIT)
 +/*
 + * Copyright (C) 2024 Andreas Rehn <rehn.andreas86@gmail.com>
@@ -167,15 +167,33 @@ new file mode 100644
 +	clock-frequency = <25000000>;
 +};
 +
++&pinctrl {
++	emmc_cfg: emmc-cfg {
++		emmc-pins {
++			pinmux = <PINMUX(PIN_EMMC_CLK, 0)>,
++				 <PINMUX(PIN_EMMC_CMD, 0)>,
++				 <PINMUX(PIN_EMMC_DAT0, 0)>,
++				 <PINMUX(PIN_EMMC_DAT1, 0)>,
++				 <PINMUX(PIN_EMMC_DAT2, 0)>,
++				 <PINMUX(PIN_EMMC_DAT3, 0)>,
++				 <PINMUX(PIN_EMMC_RSTN, 0)>;
++			drive-strength-microamp = <10800>;
++			power-source = <1800>;
++		};
++	};
++};
++
 +&emmc {
-+	status = "disabled";
++	pinctrl-0 = <&emmc_cfg>;
++	pinctrl-names = "default";
++	status = "okay";
 +	bus-width = <4>;
-+	max-frequency = <200000000>;
 +	mmc-ddr-1_8v;
 +	mmc-hs200-1_8v;
 +	no-sd;
 +	no-sdio;
 +	non-removable;
++	disable-wp;
 +};
 +
 +&gmac0 {

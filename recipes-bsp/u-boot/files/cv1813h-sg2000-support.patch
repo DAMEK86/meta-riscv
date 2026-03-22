@@ -73,7 +73,7 @@ diff --git a/arch/riscv/dts/cv1813h.dtsi b/arch/riscv/dts/cv1813h.dtsi
 new file mode 100644
 --- /dev/null
 +++ b/arch/riscv/dts/cv1813h.dtsi
-@@ -0,0 +1,25 @@
+@@ -0,0 +1,38 @@
 +// SPDX-License-Identifier: (GPL-2.0 OR MIT)
 +/*
 + * Copyright (C) 2024 Andreas Rehn <rehn.andreas86@gmail.com>
@@ -99,11 +99,24 @@ new file mode 100644
 +&clint {
 +	compatible = "sophgo,cv1800b-clint", "thead,c900-clint";
 +};
++
++/ {
++	soc {
++		emmc: mmc@4300000 {
++			compatible = "sophgo,cv1800b-dwcmshc";
++			reg = <0x4300000 0x1000>;
++			interrupts = <34 IRQ_TYPE_LEVEL_HIGH>;
++			clocks = <&clk CLK_AXI4_EMMC>, <&clk CLK_EMMC>;
++			clock-names = "core", "bus";
++			status = "disabled";
++		};
++	};
++};
 diff --git a/arch/riscv/dts/cv1813h-milkv-duo-s.dts b/arch/riscv/dts/cv1813h-milkv-duo-s.dts
 new file mode 100644
 --- /dev/null
 +++ b/arch/riscv/dts/cv1813h-milkv-duo-s.dts
-@@ -0,0 +1,57 @@
+@@ -0,0 +1,68 @@
 +// SPDX-License-Identifier: (GPL-2.0 OR MIT)
 +/*
 + * Copyright (C) 2024 Andreas Rehn <rehn.andreas86@gmail.com>
@@ -125,6 +138,8 @@ new file mode 100644
 +		serial2 = &uart2;
 +		serial3 = &uart3;
 +		serial4 = &uart4;
++		mmc0 = &sdhci0;
++		mmc1 = &emmc;
 +	};
 +
 +	chosen {
@@ -152,6 +167,15 @@ new file mode 100644
 +	no-1-8-v;
 +	no-mmc;
 +	no-sdio;
++};
++
++&emmc {
++	status = "okay";
++	bus-width = <4>;
++	no-sd;
++	no-sdio;
++	non-removable;
++	disable-wp;
 +};
 +
 +&spif {
@@ -221,15 +245,30 @@ diff --git a/board/sophgo/milkv_duo_s/board.c b/board/sophgo/milkv_duo_s/board.c
 new file mode 100644
 --- /dev/null
 +++ b/board/sophgo/milkv_duo_s/board.c
-@@ -0,0 +1,19 @@
+@@ -0,0 +1,36 @@
 +// SPDX-License-Identifier: GPL-2.0+
 +/*
 + * Copyright (c) 2024, Andreas Rehn <rehn.andreas86@gmail.com>
 + */
 +
 +#include <dm/lists.h>
++#include <asm/io.h>
 +
 +#include "../milkv_duo/ethernet.h"
++
++#define PINMUX_BASE	0x03001000
++
++static void cv181x_emmc_pinmux_init(void)
++{
++	/* Configure eMMC pins to function 0 (eMMC mode) */
++	writel(0, (void *)(PINMUX_BASE + 0x48));  /* EMMC_RSTN */
++	writel(0, (void *)(PINMUX_BASE + 0x4c));  /* EMMC_DAT2 */
++	writel(0, (void *)(PINMUX_BASE + 0x50));  /* EMMC_CLK */
++	writel(0, (void *)(PINMUX_BASE + 0x54));  /* EMMC_DAT0 */
++	writel(0, (void *)(PINMUX_BASE + 0x58));  /* EMMC_DAT3 */
++	writel(0, (void *)(PINMUX_BASE + 0x5c));  /* EMMC_CMD */
++	writel(0, (void *)(PINMUX_BASE + 0x60));  /* EMMC_DAT1 */
++}
 +
 +int board_init(void)
 +{
@@ -238,6 +277,8 @@ new file mode 100644
 +
 +	if (IS_ENABLED(CONFIG_NET))
 +		cv1800b_ephy_init();
++
++	cv181x_emmc_pinmux_init();
 +
 +	return 0;
 +}
