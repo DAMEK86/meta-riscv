@@ -82,10 +82,6 @@ do_configure:prepend:milkv-duo() {
     fi
 }
 
-do_configure:prepend:milkv-duo-s() {
-    :
-}
-
 #############################
 # compile task customizations
 #############################

@@ -1,4 +1,4 @@
-DESCRIPTION = "FSBL contains OpenSBI and u-boot binaries for Milk-V Duo"
+DESCRIPTION = "FSBL BL2 bootloader for Sophgo CV18XX/SG200X SoCs"
 LICENSE = "BSD-3-Clause"
 LIC_FILES_CHKSUM ?= "file://${COMMON_LICENSE_DIR}/BSD-3-Clause;md5=550794465ba0ec5312d6919e203a55f9"
 
@@ -38,18 +38,12 @@ DEFINES  = " \
             -DRTOS_FAST_IMAGE_TYPE=0 \
            "
 
-do_compile[depends] += "opensbi:do_deploy u-boot:do_deploy"
+do_compile[depends] += "opensbi:do_deploy virtual/bootloader:do_deploy"
 
 do_compile () {
-    # this is a risc-v bin that contains a busy loop instruction
-    # using wfi instruction, this is needed to initialize the
-    # secondary core.
-
     printf '\163\000\120\020\157\360\337\377' > ${B}/blank.bin
 
-    # For upstream U-Boot (no vendor BL33 header), prepend one
-    # The FSBL strips the 32-byte header and loads body at RUNADDR+0x20
-    # Set RUNADDR = TEXT_BASE - 0x20 so body lands exactly at TEXT_BASE
+    # For upstream U-Boot (no vendor BL33 header), prepend one.
     if ! head -c4 ${DEPLOY_DIR_IMAGE}/u-boot.bin | grep -q 'BL33'; then
         python3 -c "
 import struct, zlib
