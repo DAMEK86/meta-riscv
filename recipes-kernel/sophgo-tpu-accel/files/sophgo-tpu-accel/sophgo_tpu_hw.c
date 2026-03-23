@@ -120,8 +120,16 @@ int sophgo_tpu_hw_run_dmabuf(struct sophgo_tpu_device *tdev,
 
 	num_tdma = header->tdma_desc_count;
 
+	dev_dbg(tdev->dev, "dmabuf: magic=0x%04x bd=%u tdma=%u paddr=0x%llx\n",
+		header->magic_m, header->bd_desc_count, num_tdma,
+		(unsigned long long)dmabuf_paddr);
+
 	/* Store clock rate in header for PMU */
 	header->tpu_clk_rate = clk_get_rate(tdev->clk_axi);
+
+	dev_dbg(tdev->dev, "arraybase[0]=0x%x [2]=0x%x DES_BASE offset=0x%x\n",
+		header->arraybase[0], header->arraybase[2],
+		((u32 *)((u8 *)dmabuf_vaddr + 128))[3]);
 
 	/* Set up array base addresses from header */
 	writel(header->arraybase[0], tdev->tdma_regs + TDMA_ARRAYBASE0_L);
@@ -138,12 +146,24 @@ int sophgo_tpu_hw_run_dmabuf(struct sophgo_tpu_device *tdev,
 	/* Set TIU descriptor base address */
 	writel(header->arraybase[0], tdev->tiu_regs + BD_CTRL_BASE_ADDR);
 
-	/* Set TDMA descriptor base address (byte offset within buffer) */
+	/* Set TDMA descriptor base address.
+	 * cpu_desc[3] contains offset_tdma. In the vendor ION path this was
+	 * a byte offset within the buffer. In our GEM path, cviruntime may
+	 * store it as an absolute paddr. If it looks like an absolute address
+	 * (>= dmabuf_paddr), convert to offset. Otherwise use as-is.
+	 */
 	{
 		u32 *cpu_desc = (u32 *)((u8 *)dmabuf_vaddr + 128);
 		u32 tdma_offset = cpu_desc[3]; /* offset_tdma */
+		if (tdma_offset >= (u32)dmabuf_paddr)
+			tdma_offset -= (u32)dmabuf_paddr;
+		dev_dbg(tdev->dev, "TDMA_DES_BASE: raw=0x%x adjusted=0x%x\n",
+			cpu_desc[3], tdma_offset);
 		writel(tdma_offset, tdev->tdma_regs + TDMA_DES_BASE);
 	}
+
+	/* Stop TDMA engine before reconfiguring (required between batches) */
+	writel(0x0, tdev->tdma_regs + TDMA_CTRL);
 
 	/* Disable debug mode and enable DCM (vendor sequence) */
 	writel(0x0, tdev->tdma_regs + TDMA_DEBUG_MODE);
@@ -183,12 +203,20 @@ irqreturn_t sophgo_tpu_hw_irq(int irq, void *data)
 	reg_value = readl(tdev->tdma_regs + TDMA_INT_MASK);
 	int_status = (reg_value >> 16) & ~0x20; /* mask out stride error bit */
 
-	if (int_status != TDMA_INT_EOD)
+	if (!(int_status & TDMA_INT_VALID_MASK))
 		dev_err(tdev->dev, "TDMA IRQ unexpected: reg=0x%08x status=0x%x\n",
 			reg_value, int_status);
 
-	/* Mask all interrupts to acknowledge (vendor: write 0xFFFF0000) */
+	/* Clear status bits in upper 16 and acknowledge IRQ.
+	 * Vendor writes 0xFFFF0000 which clears all status + sets mask=0.
+	 * Restore mask to 0x20 (only stride error masked) so next kick
+	 * can trigger completion IRQs without needing hw_run_dmabuf to
+	 * explicitly unmask first.
+	 */
 	writel(0xFFFF0000, tdev->tdma_regs + TDMA_INT_MASK);
+	writel(0x20, tdev->tdma_regs + TDMA_INT_MASK);
+
+	dev_dbg(tdev->dev, "TDMA IRQ: status=0x%x, completing\n", int_status);
 
 	complete(&tdev->tdma_done);
 

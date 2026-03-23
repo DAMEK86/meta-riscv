@@ -44,6 +44,10 @@ int sophgo_tpu_submit_ioctl(struct drm_device *dev, void *data,
 	/* Assign sequence number */
 	args->seq_no = ++tdev->seq_no;
 
+	dev_dbg(tdev->dev, "submit: seq=%u handle=%u size=%u paddr=0x%llx\n",
+		args->seq_no, args->cmdbuf_handle, args->cmdbuf_size,
+		(unsigned long long)bo->paddr);
+
 	/* Submit to TPU hardware */
 	ret = sophgo_tpu_hw_run_dmabuf(tdev, bo->vaddr, bo->paddr);
 

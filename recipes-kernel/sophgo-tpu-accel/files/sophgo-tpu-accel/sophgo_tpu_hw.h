@@ -41,8 +41,10 @@
 #define TDMA_CTRL_64BYTE_ALIGN_EN	12
 #define TDMA_CTRL_INTRA_CMD_OFF		13
 
-/* TDMA interrupt status bits */
-#define TDMA_INT_EOD			(1 << 0)  /* End of descriptor */
+/* TDMA interrupt status bits (upper 16 bits of INT_MASK register) */
+#define TDMA_INT_EOD			(1 << 0)  /* End of single descriptor */
+#define TDMA_INT_CMDQ_EMPTY		(1 << 9)  /* Command queue empty (all descriptors done) */
+#define TDMA_INT_VALID_MASK		(TDMA_INT_EOD | TDMA_INT_CMDQ_EMPTY)
 #define TDMA_INT_ERROR			(1 << 16) /* Error flag */
 
 /* TIU (Tensor Instruction Unit) register offsets */
