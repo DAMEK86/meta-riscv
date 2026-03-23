@@ -1,0 +1,28 @@
+From 68e75351d3b2146b347fd281c45b992b9d66ad61 Mon Sep 17 00:00:00 2001
+From: Andreas Rehn <andreas.rehn@mercedes-benz.com>
+Date: Mon, 23 Mar 2026 03:47:37 +0100
+Subject: [PATCH] fix: remove deprecated ATOMIC_VAR_INIT for GCC 15
+
+Upstream-Status: Pending
+
+Signed-off-by: Andreas Rehn <rehn.andreas86@gmail.com>
+---
+ modules/sys/src/cvi_vb.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/modules/sys/src/cvi_vb.c b/modules/sys/src/cvi_vb.c
+index a113151..cbeb5be 100644
+--- a/modules/sys/src/cvi_vb.c
++++ b/modules/sys/src/cvi_vb.c
+@@ -30,7 +30,7 @@ typedef struct _pool {
+ static Hashmap *vbMmapHash;
+ pthread_mutex_t hash_lock;
+ 
+-static atomic_bool vb_inited = ATOMIC_VAR_INIT(false);
++static atomic_bool vb_inited = false;
+ 
+ 
+ static int _vb_hash_key(void *key)
+-- 
+2.52.0
+
