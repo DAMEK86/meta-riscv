@@ -1,0 +1,906 @@
+From 4ef908f9e6b70c0422615179e0e8f395cff92a3b Mon Sep 17 00:00:00 2001
+From: Andreas Rehn <andreas.rehn@mercedes-benz.com>
+Date: Mon, 23 Mar 2026 03:31:58 +0100
+Subject: [PATCH] port: replace ION+chardev with DRM/accel+GEM interface
+
+Upstream-Status: Inappropriate [embedded platform specific]
+
+Replace the ION allocator and /dev/cvi-tpu0 chardev interface with
+DRM/accel subsystem using GEM buffer objects via /dev/accel/accel0.
+
+Key changes:
+- bm_npu_ioctl.h: Replace vendor ioctls with DRM_IOCTL_SOPHGO_TPU_*
+  wrappers using <drm/drm.h> and <sophgo/sophgo_tpu.h>
+- mem_alloc: ION alloc -> DRM_IOCTL_SOPHGO_TPU_CREATE_BO + mmap
+- mem_free: close(dma_fd) -> DRM_IOCTL_GEM_CLOSE via thread_local fd
+- submit_dmabuf: Now takes GEM handle + cmdbuf_size instead of dma_fd
+- wait_dmabuf: Uses DRM_IOCTL_SOPHGO_TPU_WAIT with seq_no + timeout
+- mem_flush_ext/mem_invld_ext: Uses DRM_IOCTL_SOPHGO_TPU_SYNC
+- Remove ion_fd/ion_heap_id from bm_device_t
+- Remove ion_ioctl() and ion_query_heap() entirely
+- TEE functions stubbed out (not supported in DRM path)
+
+Signed-off-by: Andreas Rehn <rehn.andreas86@gmail.com>
+---
+ src/soc/180x/cvi180x_device_mem.cpp |  10 -
+ src/soc/181x/cvi181x_device_mem.cpp |  10 -
+ src/soc/182x/cvi182x_device_mem.cpp |  10 -
+ src/soc/183x/cvi183x_device_mem.cpp |  10 -
+ src/soc/common/bm_types.h           |   2 -
+ src/soc/common/cvi_device_mem.cpp   | 393 ++++++++++------------------
+ src/soc/common/cvi_device_mem.h     |  10 +-
+ src/soc/common/linux/bm_npu_ioctl.h |  95 +++----
+ 8 files changed, 184 insertions(+), 356 deletions(-)
+
+diff --git a/src/soc/180x/cvi180x_device_mem.cpp b/src/soc/180x/cvi180x_device_mem.cpp
+index f8b66ad..a844634 100644
+--- a/src/soc/180x/cvi180x_device_mem.cpp
++++ b/src/soc/180x/cvi180x_device_mem.cpp
+@@ -34,15 +34,6 @@ bmerr_t Cvi180xDeviceMem::device_open(int index, bmdev_t *dev)
+     return BM_ERR_FAILURE;
+   }
+ 
+-  pdev->ion_fd = open(ION_DEV_NAME, O_RDWR);
+-  if (pdev->ion_fd <= 0) {
+-    TPU_LOG_WARNING("open %s failed\n", ION_DEV_NAME);
+-    return BM_ERR_FAILURE;
+-  }
+-
+-  int ret = ion_query_heap(pdev);
+-  TPU_ASSERT(ret == BM_SUCCESS, NULL);
+-
+   *dev = pdev;
+ 
+   return BM_SUCCESS;
+@@ -50,7 +41,6 @@ bmerr_t Cvi180xDeviceMem::device_open(int index, bmdev_t *dev)
+ 
+ void Cvi180xDeviceMem::device_close(bmdev_t dev)
+ {
+-  close(dev->ion_fd);
+   close(dev->dev_fd);
+ 
+   // TPU_LOG_WARNING("device[%d] closed\n", dev->index);
+diff --git a/src/soc/181x/cvi181x_device_mem.cpp b/src/soc/181x/cvi181x_device_mem.cpp
+index 4c8a82a..dd4ce0e 100644
+--- a/src/soc/181x/cvi181x_device_mem.cpp
++++ b/src/soc/181x/cvi181x_device_mem.cpp
+@@ -34,15 +34,6 @@ bmerr_t Cvi181xDeviceMem::device_open(int index, bmdev_t *dev)
+     return BM_ERR_FAILURE;
+   }
+ 
+-  pdev->ion_fd = open(ION_DEV_NAME, O_RDWR);
+-  if (pdev->ion_fd <= 0) {
+-    TPU_LOG_WARNING("open %s failed\n", ION_DEV_NAME);
+-    return BM_ERR_FAILURE;
+-  }
+-
+-  int ret = ion_query_heap(pdev);
+-  TPU_ASSERT(ret == BM_SUCCESS, NULL);
+-
+   *dev = pdev;
+ 
+   return BM_SUCCESS;
+@@ -50,7 +41,6 @@ bmerr_t Cvi181xDeviceMem::device_open(int index, bmdev_t *dev)
+ 
+ void Cvi181xDeviceMem::device_close(bmdev_t dev)
+ {
+-  close(dev->ion_fd);
+   close(dev->dev_fd);
+ 
+   // TPU_LOG_WARNING("device[%d] closed\n", dev->index);
+diff --git a/src/soc/182x/cvi182x_device_mem.cpp b/src/soc/182x/cvi182x_device_mem.cpp
+index c9e5339..2540b0d 100644
+--- a/src/soc/182x/cvi182x_device_mem.cpp
++++ b/src/soc/182x/cvi182x_device_mem.cpp
+@@ -34,15 +34,6 @@ bmerr_t Cvi182xDeviceMem::device_open(int index, bmdev_t *dev)
+     return BM_ERR_FAILURE;
+   }
+ 
+-  pdev->ion_fd = open(ION_DEV_NAME, O_RDWR | O_DSYNC);
+-  if (pdev->ion_fd <= 0) {
+-    TPU_LOG_WARNING("open %s failed\n", ION_DEV_NAME);
+-    return BM_ERR_FAILURE;
+-  }
+-
+-  int ret = ion_query_heap(pdev);
+-  TPU_ASSERT(ret == BM_SUCCESS, NULL);
+-
+   *dev = pdev;
+ 
+   return BM_SUCCESS;
+@@ -50,7 +41,6 @@ bmerr_t Cvi182xDeviceMem::device_open(int index, bmdev_t *dev)
+ 
+ void Cvi182xDeviceMem::device_close(bmdev_t dev)
+ {
+-  close(dev->ion_fd);
+   close(dev->dev_fd);
+ 
+   // TPU_LOG_WARNING("device[%d] closed\n", dev->index);
+diff --git a/src/soc/183x/cvi183x_device_mem.cpp b/src/soc/183x/cvi183x_device_mem.cpp
+index d734a34..92b7b9b 100644
+--- a/src/soc/183x/cvi183x_device_mem.cpp
++++ b/src/soc/183x/cvi183x_device_mem.cpp
+@@ -34,15 +34,6 @@ bmerr_t Cvi183xDeviceMem::device_open(int index, bmdev_t *dev)
+     return BM_ERR_FAILURE;
+   }
+ 
+-  pdev->ion_fd = open(ION_DEV_NAME, O_RDWR);
+-  if (pdev->ion_fd <= 0) {
+-    TPU_LOG_WARNING("open %s failed\n", ION_DEV_NAME);
+-    return BM_ERR_FAILURE;
+-  }
+-
+-  int ret = ion_query_heap(pdev);
+-  TPU_ASSERT(ret == BM_SUCCESS, NULL);
+-
+   *dev = pdev;
+ 
+   return BM_SUCCESS;
+@@ -50,7 +41,6 @@ bmerr_t Cvi183xDeviceMem::device_open(int index, bmdev_t *dev)
+ 
+ void Cvi183xDeviceMem::device_close(bmdev_t dev)
+ {
+-  close(dev->ion_fd);
+   close(dev->dev_fd);
+ 
+   // TPU_LOG_WARNING("device[%d] closed\n", dev->index);
+diff --git a/src/soc/common/bm_types.h b/src/soc/common/bm_types.h
+index d90691a..44bef3c 100644
+--- a/src/soc/common/bm_types.h
++++ b/src/soc/common/bm_types.h
+@@ -37,8 +37,6 @@ typedef struct bm_context {
+ typedef struct bm_device {
+   int index;
+   int dev_fd;
+-  int ion_fd;
+-  u32 ion_heap_id;
+   union {
+     bmk1880v2_chip_info_t info183x;
+     bmk1822_chip_info_t info182x;
+diff --git a/src/soc/common/cvi_device_mem.cpp b/src/soc/common/cvi_device_mem.cpp
+index d875ada..029d82b 100644
+--- a/src/soc/common/cvi_device_mem.cpp
++++ b/src/soc/common/cvi_device_mem.cpp
+@@ -12,6 +12,12 @@
+ #include "cvitpu_debug.h"
+ #include "errno.h"
+ 
++/*
++ * Thread-local DRM fd used by mem_free() which has no bmdev_t parameter.
++ * Set during mem_alloc() (which does have access to dev->dev_fd).
++ */
++static thread_local int g_drm_fd = -1;
++
+ bmctx_t  CviDeviceMem::root_ctx_array[CTX_MAX_CNT] = {0};
+ uint16_t CviDeviceMem::root_submit_array[SUBMIT_QUEUE_MAX] = {0};
+ pthread_mutex_t CviDeviceMem::root_daemon_lock = PTHREAD_MUTEX_INITIALIZER;
+@@ -27,8 +33,14 @@ CviDeviceMem::CviDeviceMem() {
+ CviDeviceMem::~CviDeviceMem() {}
+ #ifdef ION_CACHE_OPEN
+ bmerr_t CviDeviceMem::mem_flush_fd(bmdev_t dev, int dma_fd) {
+-  int ret;
+-  ret = ioctl(dev->dev_fd, CVITPU_DMABUF_FLUSH_FD, &dma_fd);
++  (void)dma_fd;
++  struct drm_sophgo_tpu_sync sync_arg;
++  memset(&sync_arg, 0, sizeof(sync_arg));
++  /* flush_fd operates on the whole buffer; we don't have a handle here,
++   * so this is best-effort.  The per-region mem_flush_ext is the primary path. */
++  sync_arg.handle = 0;
++  sync_arg.flags = SOPHGO_TPU_SYNC_FLUSH;
++  int ret = ioctl(dev->dev_fd, DRM_IOCTL_SOPHGO_TPU_SYNC, &sync_arg);
+   if (ret != 0) {
+     TPU_LOG_WARNING("memory flush failed, ret=%x\n", ret);
+     return BM_ERR_FAILURE;
+@@ -37,8 +49,12 @@ bmerr_t CviDeviceMem::mem_flush_fd(bmdev_t dev, int dma_fd) {
+ }
+ 
+ bmerr_t CviDeviceMem::mem_invld_fd(bmdev_t dev, int dma_fd) {
+-  int ret;
+-  ret = ioctl(dev->dev_fd, CVITPU_DMABUF_INVLD_FD, &dma_fd);
++  (void)dma_fd;
++  struct drm_sophgo_tpu_sync sync_arg;
++  memset(&sync_arg, 0, sizeof(sync_arg));
++  sync_arg.handle = 0;
++  sync_arg.flags = SOPHGO_TPU_SYNC_INVALIDATE;
++  int ret = ioctl(dev->dev_fd, DRM_IOCTL_SOPHGO_TPU_SYNC, &sync_arg);
+   if (ret != 0) {
+     TPU_LOG_WARNING("memory invalidate failed, ret=%x\n", ret);
+     return BM_ERR_FAILURE;
+@@ -51,27 +67,19 @@ bmerr_t CviDeviceMem::mem_invld_fd(bmdev_t dev, int dma_fd) {
+ 
+ bmerr_t CviDeviceMem::mem_flush_ext(bmdev_t dev, int dma_fd, uint64_t paddr, size_t size)
+ {
+-  int ret;
+-  struct bm_cache_op_arg flush_arg;
+-  flush_arg.paddr = paddr + GLOBAL_MEM_START_ADDR;
+-  flush_arg.size = size;
+-  flush_arg.dma_fd = dma_fd;
+-
+-  uint64_t addr_new = ALIGN(flush_arg.paddr, 0x40);
+-  flush_arg.size = ALIGN(flush_arg.size, 0x40);
+-
+-  if (addr_new != flush_arg.paddr) {
+-    //TPU_LOG_WARNING("fix flush add_p=0x%lx, len=0x%llx, add_p_ori=0x%llx\n", addr_new - 0x40, flush_arg.size, flush_arg.paddr);
+-    flush_arg.size += 0x40;
+-    flush_arg.paddr = addr_new - 0x40;
+-  } else {
+-    //TPU_LOG_WARNING("ok flush add_p=0x%llx, len=0x%llx\n", flush_arg.paddr, flush_arg.size);
+-  }
++  (void)dma_fd;
++  (void)paddr;
++  struct drm_sophgo_tpu_sync sync_arg;
++  memset(&sync_arg, 0, sizeof(sync_arg));
++  /* Use GEM handle stored in dma_fd field (repurposed) */
++  sync_arg.handle = (uint32_t)dma_fd;
++  sync_arg.flags = SOPHGO_TPU_SYNC_FLUSH;
++  sync_arg.offset = 0;
++  sync_arg.size = size;
+ 
+-  // In some special cases, third-party libraries may cause fd errors
+-  // so if the ioctl fails, then reopen the device
++  int ret;
+   for (int i = 0; i < 3; ++i) {
+-    ret = ioctl(dev->dev_fd, CVITPU_DMABUF_FLUSH, &flush_arg);
++    ret = ioctl(dev->dev_fd, DRM_IOCTL_SOPHGO_TPU_SYNC, &sync_arg);
+     if (ret != 0) {
+         perror("flush ioctl fail:");
+         TPU_LOG_WARNING("memory flush failed, ret=%x\n", ret);
+@@ -85,27 +93,18 @@ bmerr_t CviDeviceMem::mem_flush_ext(bmdev_t dev, int dma_fd, uint64_t paddr, siz
+ 
+ bmerr_t CviDeviceMem::mem_invld_ext(bmdev_t dev, int dma_fd, uint64_t paddr, size_t size)
+ {
+-  int ret;
+-  struct bm_cache_op_arg invalidate_arg;
+-  invalidate_arg.paddr = paddr + GLOBAL_MEM_START_ADDR;
+-  invalidate_arg.size = size;
+-  invalidate_arg.dma_fd = dma_fd;
+-
+-  uint64_t addr_new = ALIGN(invalidate_arg.paddr, 0x40);
+-  invalidate_arg.size = ALIGN(invalidate_arg.size, 0x40);
+-
+-  if (addr_new != invalidate_arg.paddr) {
+-    //TPU_LOG_WARNING("fix invalid add_p=0x%lx, len=0x%llx, add_p_ori=0x%llx\n", addr_new - 0x40, invalidate_arg.size, invalidate_arg.paddr);
+-    invalidate_arg.size += 0x40;
+-    invalidate_arg.paddr = addr_new - 0x40;
+-  } else {
+-    //TPU_LOG_WARNING("ok invalid add_p=0x%llx, len=0x%llx\n", invalidate_arg.paddr, invalidate_arg.size);
+-  }
++  (void)dma_fd;
++  (void)paddr;
++  struct drm_sophgo_tpu_sync sync_arg;
++  memset(&sync_arg, 0, sizeof(sync_arg));
++  sync_arg.handle = (uint32_t)dma_fd;
++  sync_arg.flags = SOPHGO_TPU_SYNC_INVALIDATE;
++  sync_arg.offset = 0;
++  sync_arg.size = size;
+ 
+-  // In some special cases, third-party libraries may cause fd errors
+-  // so if the ioctl fails, then reopen the device
++  int ret;
+   for (int i = 0; i < 3; ++i) {
+-      ret = ioctl(dev->dev_fd, CVITPU_DMABUF_INVLD, &invalidate_arg);
++      ret = ioctl(dev->dev_fd, DRM_IOCTL_SOPHGO_TPU_SYNC, &sync_arg);
+       if (ret != 0) {
+           perror("invld ioctl fail:");
+           TPU_LOG_WARNING("memory invalidate failed, ret=%x\n", ret);
+@@ -131,12 +130,14 @@ bmerr_t CviDeviceMem::mem_invld_ext(bmdev_t dev, int dma_fd, uint64_t paddr, siz
+ 
+ #endif
+ 
+-bmerr_t CviDeviceMem::submit_dmabuf(bmdev_t dev, int dma_fd, uint32_t seq_no)
++bmerr_t CviDeviceMem::submit_dmabuf(bmdev_t dev, uint32_t cmdbuf_handle, uint32_t cmdbuf_size, uint32_t seq_no)
+ {
+-  struct bm_submit_dma_arg submit_dma_arg;
+-  submit_dma_arg.fd = dma_fd;
+-  submit_dma_arg.seq_no = seq_no;
+-  int ret = ioctl(dev->dev_fd, CVITPU_SUBMIT_DMABUF, &submit_dma_arg);
++  struct drm_sophgo_tpu_submit submit_arg;
++  memset(&submit_arg, 0, sizeof(submit_arg));
++  submit_arg.cmdbuf_handle = cmdbuf_handle;
++  submit_arg.cmdbuf_size = cmdbuf_size;
++  submit_arg.seq_no = seq_no;
++  int ret = ioctl(dev->dev_fd, DRM_IOCTL_SOPHGO_TPU_SUBMIT, &submit_arg);
+   if (ret != 0) {
+       perror("submit ioctl fail:");
+       TPU_LOG_WARNING("submit dmabuf failed err[%d]\n", ret);
+@@ -147,20 +148,22 @@ bmerr_t CviDeviceMem::submit_dmabuf(bmdev_t dev, int dma_fd, uint32_t seq_no)
+ 
+ bmerr_t CviDeviceMem::wait_dmabuf(bmdev_t dev, uint32_t seq_no)
+ {
+-  struct bm_wait_dma_arg wait_dma_arg;
+-  wait_dma_arg.seq_no = seq_no;
++  struct drm_sophgo_tpu_wait wait_arg;
++  memset(&wait_arg, 0, sizeof(wait_arg));
++  wait_arg.seq_no = seq_no;
++  wait_arg.timeout_ms = 0; /* infinite */
+   int ret = 0, loop_cnt = 0;
+ 
+   do {
+     if (loop_cnt > 10)
+       TPU_LOG_WARNING("bm_device_wait_dmabuf() triggered loop=%d\n", loop_cnt);
+ 
+-    ret = ioctl(dev->dev_fd, CVITPU_WAIT_DMABUF, &wait_dma_arg);
++    ret = ioctl(dev->dev_fd, DRM_IOCTL_SOPHGO_TPU_WAIT, &wait_arg);
+     loop_cnt ++;
+   } while (ret);
+ 
+-  if (wait_dma_arg.ret != 0) {
+-    TPU_LOG_WARNING("wait dmabuf failed[%d]\n", wait_dma_arg.ret);
++  if (wait_arg.status != 0) {
++    TPU_LOG_WARNING("wait dmabuf failed[%d]\n", wait_arg.status);
+     return BM_ERR_FAILURE;
+   }
+   return BM_SUCCESS;
+@@ -170,7 +173,7 @@ bmerr_t CviDeviceMem::wait_dmabuf(bmdev_t dev, uint32_t seq_no)
+ // so if the ioctl fails, then reopen the device
+ bmerr_t CviDeviceMem::reopen_dev(bmdev_t dev, int flag) {
+     if (flag == 1) {
+-        // reopen tpu
++        // reopen DRM/accel device
+         const char *tpu_dev_name_defalut = TPU_DEV_NAME;
+         const char *tpu_dev_name_env     = std::getenv("TPU_DEV");
+         const char *tpu_dev_name         = tpu_dev_name_defalut;
+@@ -186,28 +189,10 @@ bmerr_t CviDeviceMem::reopen_dev(bmdev_t dev, int flag) {
+         } else {
+             close(dev->dev_fd);
+             dev->dev_fd = dev_fd;
++            g_drm_fd = dev_fd;
+         }
+         printf("reopen tpu dev success\n");
+         TPU_LOG_WARNING("reopen tpu dev success");
+-    } else if (flag == 2) {
+-        // reopen ion
+-        printf("reopen ion dev\n");
+-        TPU_LOG_WARNING("reopen ion dev");
+-        int ion_fd = open(ION_DEV_NAME, O_RDWR | O_DSYNC);
+-        if (ion_fd <= 0) {
+-            TPU_LOG_WARNING("open ion dev failed\n");
+-            return BM_ERR_FAILURE;
+-        } else {
+-            printf("reopen ion dev success\n");
+-            TPU_LOG_WARNING("reopen ion dev success");
+-            close(dev->ion_fd);
+-            dev->ion_fd = ion_fd;
+-            /*
+-            if (0 != ion_query_heap(dev)) {
+-                TPU_LOG_WARNING("ion_query_heap failed\n");
+-            }
+-            */
+-        }
+     } else {
+         TPU_LOG_WARNING("Input param error in reopen_dev! flag:%d\n", flag);
+         return BM_ERR_INVALID_ARGUMENT;
+@@ -215,158 +200,76 @@ bmerr_t CviDeviceMem::reopen_dev(bmdev_t dev, int flag) {
+     return BM_SUCCESS;
+ }
+ 
+-bmerr_t CviDeviceMem::ion_ioctl(int fd, unsigned int heap_id_mask, size_t* size,  uint64_t *paddr, int *dma_fd) {
+-  if (!ion_legacy) {
+-    struct ion_allocation_data alloc_data;
+-    int ret;
+-
+-    /* alloc buffer */
+-    memset(&alloc_data, 0, sizeof(struct ion_allocation_data));
+-    alloc_data.len          = *size;
+-    alloc_data.heap_id_mask = heap_id_mask;
+-#ifdef ION_CACHE_OPEN
+-    alloc_data.flags = ION_FLAG_CACHED;
+-#else
+-    alloc_data.flags = 0;  // ION_FLAG_NONCACHED;
+-#endif
+-    strncpy(alloc_data.name, "tpu", MAX_ION_BUFFER_NAME);
+-
+-    // In some special cases, third-party libraries may cause fd errors
+-    // so if the ioctl fails, then reopen the device
+-    ret = ioctl(fd, ION_IOC_ALLOC, &alloc_data);
+-    if (0 == ret) {
+-      *paddr = alloc_data.paddr;
+-      *dma_fd = alloc_data.fd; 
+-      *size = alloc_data.len;
+-      return BM_SUCCESS;
+-    } else if (errno == EINVAL) {
+-      ion_legacy = true; 
+-      TPU_LOG_WARNING("use ion legacy!");
+-    } else {
+-      perror("ion ioctl fail:");
+-      TPU_LOG_WARNING("ion alloc failed, size = %zu, ret=%x\n", *size, ret);
+-      return BM_ERR_FAILURE;
+-    }
+-  }
+-
+-  struct ion_allocation_data_legacy alloc_data;
++bmerr_t CviDeviceMem::mem_alloc(bmdev_t dev, size_t size, uint64_t *paddr,
++                      uint8_t **vaddr, int *dma_fd)
++{
+   int ret;
+ 
+-  /* alloc buffer */
+-  memset(&alloc_data, 0, sizeof(struct ion_allocation_data_legacy));
+-  alloc_data.len          = *size;
+-  alloc_data.heap_id_mask = heap_id_mask;
++  /* Save DRM fd for mem_free() which lacks a dev pointer */
++  g_drm_fd = dev->dev_fd;
++
++  struct drm_sophgo_tpu_create_bo create_arg;
++  memset(&create_arg, 0, sizeof(create_arg));
++  create_arg.size = size;
+ #ifdef ION_CACHE_OPEN
+-  alloc_data.flags = ION_FLAG_CACHED;
++  create_arg.flags = SOPHGO_TPU_BO_CACHED;
+ #else
+-  alloc_data.flags = 0;  // ION_FLAG_NONCACHED;
++  create_arg.flags = 0;
+ #endif
+ 
+-  // In some special cases, third-party libraries may cause fd errors
+-  // so if the ioctl fails, then reopen the device
+-  ret = ioctl(fd, ION_IOC_ALLOC_LEGACY, &alloc_data);
+-  if (0 == ret) {
+-    *paddr = alloc_data.paddr;
+-    *dma_fd = alloc_data.fd; 
+-    *size = alloc_data.len;
+-    return BM_SUCCESS;
+-  } else {
+-    perror("ion ioctl fail:");
+-    TPU_LOG_WARNING("ion alloc failed, size = %zu, ret=%x\n", *size, ret);
++  ret = ioctl(dev->dev_fd, DRM_IOCTL_SOPHGO_TPU_CREATE_BO, &create_arg);
++  if (ret != 0) {
++    perror("DRM CREATE_BO fail:");
++    TPU_LOG_WARNING("GEM alloc failed, size = %zu, ret=%x\n", size, ret);
+     return BM_ERR_FAILURE;
+   }
+-}
+ 
+-bmerr_t CviDeviceMem::mem_alloc(bmdev_t dev, size_t size, uint64_t *paddr,
+-                      uint8_t **vaddr, int *dma_fd)
+-{
+-  void *user_addr = NULL;
+-  int ret;
+-  unsigned int heap_id_mask = (1 << dev->ion_heap_id);
+-  int err_flag = 0;
+-
+-  // In some special cases, third-party libraries may cause fd errors
+-  // so if the ioctl fails, then reopen the device
+-  for (int i = 0; i < 3; ++i) {
+-    do {
+-      ret = ion_ioctl(dev->ion_fd, heap_id_mask, &size, paddr, dma_fd);
+-      if (ret != BM_SUCCESS) {
+-        err_flag = 2;
+-        break;
+-      }
++  /* mmap via the offset returned by CREATE_BO */
++  void *user_addr = mmap(NULL, create_arg.size, PROT_READ | PROT_WRITE,
++                         MAP_SHARED, dev->dev_fd, create_arg.offset);
++  if (user_addr == MAP_FAILED) {
++    perror("mmap fail:");
++    TPU_LOG_WARNING("GEM mmap failed handle[%u] size[%zu]\n",
++                    create_arg.handle, (size_t)create_arg.size);
++    /* Close the GEM handle */
++    struct drm_gem_close close_arg;
++    memset(&close_arg, 0, sizeof(close_arg));
++    close_arg.handle = create_arg.handle;
++    ioctl(dev->dev_fd, DRM_IOCTL_GEM_CLOSE, &close_arg);
++    return BM_ERR_FAILURE;
++  }
+ 
+-      /* mmap to user */
+-      user_addr = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED,
+-                       *dma_fd, 0);
+-      if (user_addr == MAP_FAILED) {
+-        perror("mmap fail:");
+-        TPU_LOG_WARNING("ion map failed phy_addr[%" PRIx64 "] length[%zu] fd[%u]\n", *paddr, size, *dma_fd);
+-        close(*dma_fd);
+-        err_flag = 0;
+-        ret = -1;
+-        break;
+-      }
++  /* GEM returns absolute paddr; with DRM path GLOBAL_MEM_START_ADDR == 0 */
++  *paddr = create_arg.paddr;
++  *vaddr = (uint8_t *)user_addr;
++  /* Repurpose dma_fd to store the GEM handle (int-sized) */
++  *dma_fd = (int)create_arg.handle;
+ 
+-      *paddr -= GLOBAL_MEM_START_ADDR;
+-      *vaddr = (uint8_t *)user_addr;
+-      ret = mem_invld_ext(dev, *dma_fd, *paddr, size);
+-      if (ret != BM_SUCCESS) {
+-        munmap(user_addr, size);
+-        close(*dma_fd);
+-        TPU_LOG_WARNING("memory invalidate failed, ret=%x\n", ret);
+-        err_flag = 1;
+-        break;
+-      }
+-    } while (0);
+-    if (ret == BM_SUCCESS) {
+-      break;
+-    } else {
+-      if (err_flag > 0) {
+-        reopen_dev(dev, err_flag);
+-      }
+-    }
++  ret = mem_invld_ext(dev, *dma_fd, *paddr, create_arg.size);
++  if (ret != BM_SUCCESS) {
++    munmap(user_addr, create_arg.size);
++    struct drm_gem_close close_arg;
++    memset(&close_arg, 0, sizeof(close_arg));
++    close_arg.handle = create_arg.handle;
++    ioctl(dev->dev_fd, DRM_IOCTL_GEM_CLOSE, &close_arg);
++    TPU_LOG_WARNING("memory invalidate failed, ret=%x\n", ret);
++    return BM_ERR_FAILURE;
+   }
+ 
+-  return ret;
++  return BM_SUCCESS;
+ }
+ 
+ bmerr_t CviDeviceMem::mem_free(uint8_t *vaddr, size_t size, int dma_fd)
+ {
+   munmap(vaddr, size);
+-  close(dma_fd);
+-  return BM_SUCCESS;
+-}
+-
+-bmerr_t CviDeviceMem::ion_query_heap(bmdev_t dev)
+-{
+-  unsigned int heap_id;
+-  struct ion_heap_query query;
+-  struct ion_heap_data heap_data[MAX_HEAP_COUNT];
+-  int ret;
+ 
+-  memset(&query, 0, sizeof(query));
+-  query.cnt = MAX_HEAP_COUNT;
+-  query.heaps = (unsigned long int)&heap_data[0];
+-  ret = ioctl(dev->ion_fd, ION_IOC_HEAP_QUERY, &query);
+-  if (ret != 0) {
+-    TPU_LOG_WARNING("io query heap failed, ret=%x\n", ret);
+-    return BM_ERR_FAILURE;
++  /* dma_fd is repurposed as GEM handle in the DRM path */
++  if (g_drm_fd >= 0) {
++    struct drm_gem_close close_arg;
++    memset(&close_arg, 0, sizeof(close_arg));
++    close_arg.handle = (uint32_t)dma_fd;
++    ioctl(g_drm_fd, DRM_IOCTL_GEM_CLOSE, &close_arg);
+   }
+-
+-  heap_id = MAX_HEAP_COUNT + 1;
+-  for (unsigned int i = 0; i < query.cnt; i++) {
+-    if (heap_data[i].type == ION_HEAP_TYPE_CARVEOUT) {
+-      heap_id = heap_data[i].heap_id;
+-      break;
+-    }
+-  }
+-
+-  if (heap_id > MAX_HEAP_COUNT) {
+-    TPU_LOG_WARNING("no carveout heap found\n");
+-    return BM_ERR_FAILURE;
+-  }
+-
+-  dev->ion_heap_id = heap_id;
+   return BM_SUCCESS;
+ }
+ 
+@@ -374,18 +277,14 @@ bmerr_t CviDeviceMem::load_tee(bmctx_t ctx, uint64_t cmdbuf_addr_ree, uint32_t c
+                       uint64_t weight_addr_ree, uint32_t weight_len_ree,
+                       uint64_t neuron_addr_ree)
+ {
+-  struct cvi_load_tee_arg iocrl_arg;
+-
+-  //recover physical address for TEE 1 vs 1 memory mapping
+-  iocrl_arg.cmdbuf_addr_ree = cmdbuf_addr_ree + GLOBAL_MEM_START_ADDR;
+-  iocrl_arg.cmdbuf_len_ree = cmdbuf_len_ree;
+-  iocrl_arg.weight_addr_ree = weight_addr_ree + GLOBAL_MEM_START_ADDR;
+-  iocrl_arg.weight_len_ree = weight_len_ree;
+-  iocrl_arg.neuron_addr_ree = neuron_addr_ree + GLOBAL_MEM_START_ADDR;
+-
+-  int ret = ioctl(ctx->dev->dev_fd, CVITPU_LOAD_TEE, &iocrl_arg);
+-  TPU_ASSERT(ret == 0, "cvi_device_load_tee() failed");
+-  return BM_SUCCESS;
++  (void)ctx;
++  (void)cmdbuf_addr_ree;
++  (void)cmdbuf_len_ree;
++  (void)weight_addr_ree;
++  (void)weight_len_ree;
++  (void)neuron_addr_ree;
++  TPU_LOG_WARNING("TEE not supported in DRM/accel path\n");
++  return BM_ERR_FAILURE;
+ }
+ 
+ bmerr_t CviDeviceMem::run_tee(bmctx_t ctx, uint32_t seq_no, uint64_t dmabuf_addr,
+@@ -393,21 +292,17 @@ bmerr_t CviDeviceMem::run_tee(bmctx_t ctx, uint32_t seq_no, uint64_t dmabuf_addr
+                       uint64_t array_base4, uint64_t array_base5,
+                       uint64_t array_base6, uint64_t array_base7)
+ {
+-  struct cvi_submit_tee_arg iocrl_arg;
+-
+-  iocrl_arg.dmabuf_tee_addr = dmabuf_addr;
+-  iocrl_arg.gaddr_base2 = array_base2;
+-  iocrl_arg.gaddr_base3 = array_base3;
+-  iocrl_arg.gaddr_base4 = array_base4;
+-  iocrl_arg.gaddr_base5 = array_base5;
+-  iocrl_arg.gaddr_base6 = array_base6;
+-  iocrl_arg.gaddr_base7 = array_base7;
+-  iocrl_arg.seq_no = seq_no;
+-
+-  int ret = ioctl(ctx->dev->dev_fd, CVITPU_SUBMIT_TEE, &iocrl_arg);
+-  TPU_ASSERT(ret == 0, "cvi_device_run_tee() failed");
+-
+-  return BM_SUCCESS;
++  (void)ctx;
++  (void)seq_no;
++  (void)dmabuf_addr;
++  (void)array_base2;
++  (void)array_base3;
++  (void)array_base4;
++  (void)array_base5;
++  (void)array_base6;
++  (void)array_base7;
++  TPU_LOG_WARNING("TEE not supported in DRM/accel path\n");
++  return BM_ERR_FAILURE;
+ }
+ 
+ 
+@@ -448,7 +343,7 @@ bmmem_device_t CviDeviceMem::mem_alloc_raw(bmctx_t ctx, size_t size) {
+ 
+   if (ret != BM_SUCCESS) {
+     delete device_mem;
+-    TPU_ASSERT(0, "alloc ion failed");
++    TPU_ASSERT(0, "alloc GEM BO failed");
+     return NULL;
+   }
+ 
+@@ -481,14 +376,14 @@ bmmem_device_t CviDeviceMem::mem_alloc_pagesize(bmctx_t ctx, size_t size) {
+   device_mem->flags.u.type = BMMEM_TYPE_DEVICE;
+   device_mem->user_ref_cnt = 0;
+   device_mem->size = align_size;
+-  ROOTDAEMON_LOCK();  
++  ROOTDAEMON_LOCK();
+   ret = mem_alloc(ctx->dev, align_size, &device_mem->p_addr, &device_mem->v_addr,
+                             &device_mem->dma_fd);
+   ROOTDAEMON_UNLOCK();
+ 
+   if (ret != BM_SUCCESS) {
+     delete device_mem;
+-    TPU_ASSERT(0, "alloc ion failed");
++    TPU_ASSERT(0, "alloc GEM BO failed");
+     return NULL;
+   }
+ 
+@@ -801,18 +696,12 @@ uint64_t CviDeviceMem::read_base_reg(bmctx_t ctx, u32 inx) {
+ 
+ bmerr_t CviDeviceMem::run_cmdbuf_tee(bmctx_t ctx, uint16_t *seq_no, uint64_t dmabuf_addr, cvi_array_base *array_base)
+ {
+-  // seq_no need be protected
+-  BMDEV_LOCK(ctx->dev);
+-
+-  dmabuf_addr += GLOBAL_MEM_START_ADDR;
+-  bmerr_t ret = run_tee(ctx, ctx->seq_no, dmabuf_addr,
+-                  array_base->gaddr_base2, array_base->gaddr_base3,
+-                  array_base->gaddr_base4, array_base->gaddr_base5,
+-                  array_base->gaddr_base6, array_base->gaddr_base7);
+-
+-  *seq_no = ctx->seq_no++;
+-  BMDEV_UNLOCK(ctx->dev);
+-  return ret;
++  (void)ctx;
++  (void)seq_no;
++  (void)dmabuf_addr;
++  (void)array_base;
++  TPU_LOG_WARNING("TEE not supported in DRM/accel path\n");
++  return BM_ERR_FAILURE;
+ }
+ 
+ bmerr_t CviDeviceMem::run_cmdbuf(bmctx_t ctx, bmmem_device_t cmdbuf_mem, uint16_t *seq_no) {
+@@ -820,7 +709,8 @@ bmerr_t CviDeviceMem::run_cmdbuf(bmctx_t ctx, bmmem_device_t cmdbuf_mem, uint16_
+   BMDEV_LOCK(ctx->dev);
+ 
+   bm_memory_t *device_mem = (bm_memory_t *)cmdbuf_mem;
+-  bmerr_t ret = submit_dmabuf(ctx->dev, device_mem->dma_fd, ctx->seq_no);
++  bmerr_t ret = submit_dmabuf(ctx->dev, (uint32_t)device_mem->dma_fd,
++                              (uint32_t)device_mem->size, ctx->seq_no);
+ 
+   if (ret != BM_SUCCESS) {
+     // ret = bmmem_device_crc32_check(ctx, cmdbuf_mem);
+@@ -865,7 +755,8 @@ bmerr_t CviDeviceMem::run_cmdbuf_ex(bmctx_t ctx, bmmem_device_t cmdbuf_mem, uint
+   //bm_device_mem_flush_ext(ctx->dev, device_mem->dma_fd, device_mem->p_addr, device_mem->size);
+ 
+   //submit
+-  bmerr_t ret = submit_dmabuf(ctx->dev, device_mem->dma_fd, ctx->seq_no);
++  bmerr_t ret = submit_dmabuf(ctx->dev, (uint32_t)device_mem->dma_fd,
++                              (uint32_t)device_mem->size, ctx->seq_no);
+   *seq_no = ctx->seq_no++;
+   BMDEV_UNLOCK(ctx->dev);
+ 
+@@ -904,7 +795,8 @@ bmerr_t CviDeviceMem::run_cmdbuf_ex2(bmctx_t ctx, bmmem_device_t cmdbuf_mem, uin
+     mem_protect(cmdbuf_mem->v_addr, cmdbuf_mem->size);
+   }
+   //submit
+-  bmerr_t ret = submit_dmabuf(ctx->dev, device_mem->dma_fd, ctx->seq_no);
++  bmerr_t ret = submit_dmabuf(ctx->dev, (uint32_t)device_mem->dma_fd,
++                              (uint32_t)device_mem->size, ctx->seq_no);
+   *seq_no = ctx->seq_no++;
+   BMDEV_UNLOCK(ctx->dev);
+ 
+@@ -921,7 +813,8 @@ bmerr_t CviDeviceMem::run_async(bmctx_t ctx, bmmem_device_t cmdbuf_mem)
+   bm_memory_t *device_mem = (bm_memory_t *)cmdbuf_mem;
+ 
+   //submit
+-  bmerr_t ret = submit_dmabuf(ctx->dev, device_mem->dma_fd, ctx->seq_no);
++  bmerr_t ret = submit_dmabuf(ctx->dev, (uint32_t)device_mem->dma_fd,
++                              (uint32_t)device_mem->size, ctx->seq_no);
+   seq_no_current = ctx->seq_no++;
+   BMDEV_UNLOCK(ctx->dev);
+ 
+diff --git a/src/soc/common/cvi_device_mem.h b/src/soc/common/cvi_device_mem.h
+index 792053c..8befe7e 100644
+--- a/src/soc/common/cvi_device_mem.h
++++ b/src/soc/common/cvi_device_mem.h
+@@ -4,13 +4,10 @@
+ #include <stddef.h>
+ #include <inttypes.h>
+ #include "bmruntime.h"
+-#include "linux/ion.h"
+ #include "linux/bm_npu_ioctl.h"
+ #include "bm_types.h"
+ 
+-#define TPU_DEV_NAME "/dev/cvi-tpu0"
+-#define ION_DEV_NAME "/dev/ion"
+-#define MAX_HEAP_COUNT ION_HEAP_TYPE_CUSTOM
++#define TPU_DEV_NAME "/dev/accel/accel0"
+ 
+ typedef struct __tee_firewall_info {
+   uint64_t address;
+@@ -96,14 +93,13 @@ public:
+ 
+ public:
+   virtual void bmmem_dump_mem_array(void);
+-  bmerr_t ion_query_heap(bmdev_t dev);
+ #ifdef ION_CACHE_OPEN
+   virtual bmerr_t mem_flush_fd(bmdev_t dev, int dma_fd);
+   virtual bmerr_t mem_invld_fd(bmdev_t dev, int dma_fd);
+ #endif
+   virtual bmerr_t mem_flush_ext(bmdev_t dev, int dma_fd, uint64_t paddr, size_t size);
+   virtual bmerr_t mem_invld_ext(bmdev_t dev, int dma_fd, uint64_t paddr, size_t size);
+-  virtual bmerr_t submit_dmabuf(bmdev_t dev, int dma_fd, uint32_t seq_no);
++  virtual bmerr_t submit_dmabuf(bmdev_t dev, uint32_t cmdbuf_handle, uint32_t cmdbuf_size, uint32_t seq_no);
+   virtual bmerr_t wait_dmabuf(bmdev_t dev, uint32_t seq_no);
+   virtual bmerr_t mem_alloc(bmdev_t dev, size_t size, uint64_t *paddr, uint8_t **vaddr, int *dma_fd);
+   virtual bmerr_t mem_free(uint8_t *vaddr, size_t size, int dma_fd);
+@@ -117,13 +113,11 @@ public:
+                   uint64_t array_base4, uint64_t array_base5,
+                   uint64_t array_base6, uint64_t array_base7);
+   virtual bmerr_t reopen_dev(bmdev_t dev, int flag);
+-  bmerr_t ion_ioctl(int fd, unsigned int heap_id_mask, size_t* size, uint64_t *paddr, int *dma_fd);
+ 
+  protected:
+   uint64_t GLOBAL_MEM_START_ADDR;
+   uint64_t g_gmem_size;
+   uint16_t tpu_dmabuf_header_m;
+-  bool ion_legacy = false;
+   bool protect = false; //if cmdbuf_mem protect
+ public:
+   static bmctx_t root_ctx_array[CTX_MAX_CNT];
+diff --git a/src/soc/common/linux/bm_npu_ioctl.h b/src/soc/common/linux/bm_npu_ioctl.h
+index 6cb7b3d..f157a9a 100644
+--- a/src/soc/common/linux/bm_npu_ioctl.h
++++ b/src/soc/common/linux/bm_npu_ioctl.h
+@@ -1,78 +1,61 @@
+ /*
+- * Bitmain SoC NPU Controller Driver
++ * DRM/accel ioctl wrappers for Sophgo TPU
++ *
++ * Replaces the old ION+chardev interface (/dev/cvi-tpu0 + /dev/ion)
++ * with DRM/accel+GEM (/dev/accel/accel0).
+  *
+  * Copyright (c) 2018 Bitmain Ltd.
++ * Copyright (c) 2026 meta-riscv contributors
+  *
+- * This program is free software; you can redistribute it and/or modify
+- * it under the terms of the GNU General Public License as published by
+- * the Free Software Foundation; either version 2 of the License, or
+- * (at your option) any later version.
++ * SPDX-License-Identifier: GPL-2.0+
+  */
+ 
+ #ifndef __BM_NPU_IOCTL_H__
+ #define __BM_NPU_IOCTL_H__
+ 
+ #include <stdint.h>
++#include <drm/drm.h>
++#include <sophgo/sophgo_tpu.h>
++
++/*
++ * Legacy struct compatibility — map old names used throughout cviruntime
++ * to the new DRM ioctl structs where a 1:1 mapping exists.
++ */
+ 
+ struct bm_cache_op_arg {
+-  unsigned long long paddr;
+-  unsigned long long size;
+-  int dma_fd;
++  uint32_t handle;
++  uint32_t flags;         /* SOPHGO_TPU_SYNC_FLUSH / _INVALIDATE */
++  uint64_t paddr;         /* unused in DRM path, kept for source compat */
++  uint64_t size;
++  int dma_fd;             /* unused in DRM path, kept for source compat */
+ };
+ 
+ struct bm_submit_dma_arg {
+-  int fd;
+-  unsigned int seq_no;
++  uint32_t cmdbuf_handle;
++  uint32_t cmdbuf_size;
++  uint32_t seq_no;        /* out: filled by kernel */
+ };
+ 
+ struct bm_wait_dma_arg {
+-  unsigned int seq_no;
+-  int ret;
++  uint32_t seq_no;
++  uint32_t timeout_ms;
++  int ret;                /* out: 0 = success */
+ };
+ 
+-struct bm_pio_mode {
+-  unsigned long long cmdbuf;
+-  unsigned long long sz;
+-};
+-
+-struct cvi_load_tee_arg {
+-  //ree domain
+-  unsigned long long cmdbuf_addr_ree;
+-  unsigned int cmdbuf_len_ree;
+-  unsigned long long weight_addr_ree;
+-  unsigned int weight_len_ree;
+-  unsigned long long neuron_addr_ree;
+-
+-  //tee domain
+-  unsigned long long dmabuf_addr_tee;
+-};
+-
+-struct cvi_submit_tee_arg {
+-  unsigned long long dmabuf_tee_addr;
+-  unsigned long long gaddr_base2;
+-  unsigned long long gaddr_base3;
+-  unsigned long long gaddr_base4;
+-  unsigned long long gaddr_base5;
+-  unsigned long long gaddr_base6;
+-  unsigned long long gaddr_base7;
+-  unsigned int seq_no;
+-};
+-
+-struct cvi_unload_tee_arg {
+-  unsigned long long paddr;
+-  unsigned long long size;
+-};
+-
+-#define CVITPU_SUBMIT_DMABUF      _IOW('p', 0x01, unsigned long long)
+-#define CVITPU_DMABUF_FLUSH_FD    _IOW('p', 0x02, unsigned long long)
+-#define CVITPU_DMABUF_INVLD_FD    _IOW('p', 0x03, unsigned long long)
+-#define CVITPU_DMABUF_FLUSH       _IOW('p', 0x04, unsigned long long)
+-#define CVITPU_DMABUF_INVLD       _IOW('p', 0x05, unsigned long long)
+-#define CVITPU_WAIT_DMABUF        _IOWR('p', 0x06, unsigned long long)
+-#define CVITPU_PIO_MODE           _IOW('p', 0x07, unsigned long long)
+-
+-#define CVITPU_LOAD_TEE           _IOWR('p', 0x08, unsigned long long)
+-#define CVITPU_SUBMIT_TEE         _IOW('p', 0x09, unsigned long long)
+-#define CVITPU_UNLOAD_TEE         _IOW('p', 0x0A, unsigned long long)
++/* Legacy ioctl numbers — no longer used, but kept so callers compile.
++ * Actual dispatch goes through DRM_IOCTL_SOPHGO_TPU_* macros.
++ */
++#define CVITPU_SUBMIT_DMABUF      DRM_IOCTL_SOPHGO_TPU_SUBMIT
++#define CVITPU_DMABUF_FLUSH_FD    DRM_IOCTL_SOPHGO_TPU_SYNC
++#define CVITPU_DMABUF_INVLD_FD    DRM_IOCTL_SOPHGO_TPU_SYNC
++#define CVITPU_DMABUF_FLUSH       DRM_IOCTL_SOPHGO_TPU_SYNC
++#define CVITPU_DMABUF_INVLD       DRM_IOCTL_SOPHGO_TPU_SYNC
++#define CVITPU_WAIT_DMABUF        DRM_IOCTL_SOPHGO_TPU_WAIT
++
++/* TEE ioctls — not supported in DRM path */
++#define CVITPU_LOAD_TEE           0
++#define CVITPU_SUBMIT_TEE         0
++#define CVITPU_UNLOAD_TEE         0
++#define CVITPU_PIO_MODE           0
+ 
+ #endif /* __BM_NPU_IOCTL_H__ */
+-- 
+2.52.0
+
