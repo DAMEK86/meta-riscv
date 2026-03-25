@@ -1,0 +1,92 @@
+From 64ef8098c35726069c7150ea08b4ceb8b76402fb Mon Sep 17 00:00:00 2001
+From: Andreas Rehn <rehn.andreas86@gmail.com>
+Date: Tue, 14 Apr 2026 15:00:02 +0000
+Subject: [PATCH 1/3] riscv: sophgo: Add CV1813H SoC base support
+
+- Add cv1813h.dtsi shared SoC DTSI
+- Register TARGET_MILKV_DUO_S and TARGET_MILKV_DUO_256M in Kconfig
+
+Upstream-Status: Inappropriate [boardspecific]
+
+Signed-off-by: Andreas Rehn <rehn.andreas86@gmail.com>
+---
+ arch/riscv/cpu/cv1800b/Kconfig |  6 ++++++
+ arch/riscv/dts/Makefile        |  2 ++
+ arch/riscv/dts/cv1813h.dtsi    | 38 ++++++++++++++++++++++++++++++++++
+ 3 files changed, 46 insertions(+)
+ create mode 100644 arch/riscv/dts/cv1813h.dtsi
+
+diff --git a/arch/riscv/cpu/cv1800b/Kconfig b/arch/riscv/cpu/cv1800b/Kconfig
+index 57f724ae043..726c6806073 100644
+--- a/arch/riscv/cpu/cv1800b/Kconfig
++++ b/arch/riscv/cpu/cv1800b/Kconfig
+@@ -11,3 +11,9 @@ config SOPHGO_CV1800B
+ 	imply CPU_RISCV
+ 	imply RISCV_TIMER
+ 	imply CMD_CPU
++
++config TARGET_MILKV_DUO_S
++	bool "Milk-V Duo S (SG2000/CV1813H)"
++
++config TARGET_MILKV_DUO_256M
++	bool "Milk-V Duo 256M (SG2002/CV1812H)"
+diff --git a/arch/riscv/dts/Makefile b/arch/riscv/dts/Makefile
+index 9b347fc3b50..8b6c9647b01 100644
+--- a/arch/riscv/dts/Makefile
++++ b/arch/riscv/dts/Makefile
+@@ -6,6 +6,8 @@ dtb-$(CONFIG_TARGET_BANANAPI_F3) += k1-bananapi-f3.dtb
+ dtb-$(CONFIG_TARGET_K230_CANMV) += k230-canmv.dtb
+ dtb-$(CONFIG_TARGET_MICROCHIP_ICICLE) += mpfs-icicle-kit.dtb
+ dtb-$(CONFIG_TARGET_MILKV_DUO) += cv1800b-milkv-duo.dtb
++dtb-$(CONFIG_TARGET_MILKV_DUO_S) += cv1813h-milkv-duo-s.dtb
++dtb-$(CONFIG_TARGET_MILKV_DUO_256M) += cv1813h-milkv-duo-256m.dtb
+ dtb-$(CONFIG_TARGET_LICHEERV_NANO) += sg2002-licheerv-nano-b.dtb
+ dtb-$(CONFIG_TARGET_QEMU_VIRT) += qemu-virt32.dtb qemu-virt64.dtb
+ dtb-$(CONFIG_TARGET_OPENPITON_RISCV64) += openpiton-riscv64.dtb
+diff --git a/arch/riscv/dts/cv1813h.dtsi b/arch/riscv/dts/cv1813h.dtsi
+new file mode 100644
+index 00000000000..fbf27a18b81
+--- /dev/null
++++ b/arch/riscv/dts/cv1813h.dtsi
+@@ -0,0 +1,38 @@
++// SPDX-License-Identifier: (GPL-2.0 OR MIT)
++/*
++ * Copyright (C) 2026 Andreas Rehn <rehn.andreas86@gmail.com>
++ *
++ * Sophgo CV1813H / SG2000 SoC
++ * Pin-compatible with CV1800B, shares cv18xx peripheral IP.
++ */
++
++#include "cv18xx.dtsi"
++
++/ {
++	compatible = "sophgo,cv1813h";
++};
++
++&clk {
++	compatible = "sophgo,cv1800-clk";
++};
++
++&plic {
++	compatible = "sophgo,cv1800b-plic", "thead,c900-plic";
++};
++
++&clint {
++	compatible = "sophgo,cv1800b-clint", "thead,c900-clint";
++};
++
++/ {
++	soc {
++		emmc: mmc@4300000 {
++			compatible = "sophgo,cv1800b-dwcmshc";
++			reg = <0x4300000 0x1000>;
++			interrupts = <34 IRQ_TYPE_LEVEL_HIGH>;
++			clocks = <&clk CLK_AXI4_EMMC>, <&clk CLK_EMMC>;
++			clock-names = "core", "bus";
++			status = "disabled";
++		};
++	};
++};
+-- 
+2.34.1
+
