@@ -4,3 +4,7 @@ header:
     - base-riscv.yml
 
 machine: milkv-duo256m
+
+local_conf_header:
+  milkv-duo256m: |
+    IMAGE_INSTALL:append = " packagegroup-base"
