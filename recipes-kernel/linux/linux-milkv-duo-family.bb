@@ -16,6 +16,7 @@ SRC_URI = "git://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git;protoc
     file://0002-riscv-dts-sophgo-add-milkv-duo-s.patch \
     file://0003-riscv-dts-sophgo-add-milkv-duo-256m.patch \
     file://0004-sophgo-add-cv1800-rtcsys-reset-handler.patch \
+    file://0005-mmc-sdhci-of-dwcmshc-add-cv18xx-callbacks-for-SG2000-eMMC.patch \
     file://dts-exclude-memory-occupied-by-opensbi.patch \
     file://${MACHINE}_defconfig \
     file://multi.its \
